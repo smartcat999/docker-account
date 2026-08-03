@@ -1,8 +1,9 @@
 # docker-account
 
 [![Release](https://img.shields.io/github/v/release/smartcat999/docker-account?style=flat-square)](https://github.com/smartcat999/docker-account/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/smartcat999/docker-account/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/smartcat999/docker-account/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/smartcat999/docker-account?style=flat-square)](LICENSE)
 ![macOS and Linux](https://img.shields.io/badge/macOS%20%7C%20Linux-supported-3b82f6?style=flat-square)
-![amd64 and arm64](https://img.shields.io/badge/amd64%20%7C%20arm64-supported-64748b?style=flat-square)
 
 Switch between Docker Hub or private registry accounts without logging in again.
 
@@ -16,12 +17,27 @@ curl -fsSL https://raw.githubusercontent.com/smartcat999/docker-account/main/ins
 
 Prebuilt binaries are available for macOS and Linux on amd64 and arm64.
 
+To install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smartcat999/docker-account/main/install.sh | VERSION=v0.7.4 sh
+```
+
 ## Quick start
 
 Add an account and securely enter a password or access token:
 
 ```bash
 docker account add personal --username your-docker-id --login
+```
+
+Private registries are supported:
+
+```bash
+docker account add company \
+  --username alice \
+  --registry registry.example.com \
+  --login
 ```
 
 Enable account switching once for your shell:
@@ -75,6 +91,24 @@ Account credentials are stored separately under `~/.docker/accounts`. Docker run
 
 On macOS, credentials remain in Keychain with an account-specific namespace. Removing an account does not delete shared Docker contexts or builders.
 
+## Upgrade and uninstall
+
+Run the install command again to upgrade to the latest release. To remove the plugin:
+
+```bash
+rm ~/.docker/cli-plugins/docker-account
+```
+
+Account data under `~/.docker/accounts` is not removed automatically.
+
+## Project
+
+- [Troubleshooting](docs/troubleshooting.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
+- [MIT License](LICENSE)
+
 ## Development
 
 Requires Go 1.25+:
@@ -83,3 +117,5 @@ Requires Go 1.25+:
 make test
 make install
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.

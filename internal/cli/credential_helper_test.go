@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pengwu/docker-account/internal/accounts"
+	"github.com/smartcat999/docker-account/internal/accounts"
 )
 
 func TestNamespaceCredentialStorePayload(t *testing.T) {

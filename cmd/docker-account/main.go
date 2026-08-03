@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pengwu/docker-account/internal/cli"
+	"github.com/smartcat999/docker-account/internal/cli"
 )
 
 var version = "dev"

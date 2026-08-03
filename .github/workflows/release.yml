@@ -16,8 +16,8 @@ jobs:
         os: [darwin, linux]
         arch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Build
@@ -28,7 +28,7 @@ jobs:
         run: |
           go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o docker-account ./cmd/docker-account
           tar -czf "docker-account_${GOOS}_${GOARCH}.tar.gz" docker-account
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: docker-account-${{ matrix.os }}-${{ matrix.arch }}
           path: docker-account_${{ matrix.os }}_${{ matrix.arch }}.tar.gz
@@ -37,7 +37,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true

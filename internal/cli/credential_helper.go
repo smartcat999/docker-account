@@ -12,7 +12,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/pengwu/docker-account/internal/accounts"
+	"github.com/smartcat999/docker-account/internal/accounts"
 )
 
 // RunCredentialHelper implements Docker's credential-helper protocol and

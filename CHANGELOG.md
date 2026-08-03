@@ -1,0 +1,16 @@
+# Changelog
+
+All notable changes are documented here. This project follows Semantic Versioning.
+
+## [Unreleased]
+
+## [0.7.4] - 2026-08-03
+
+- Added prebuilt macOS and Linux releases for amd64 and arm64.
+- Added checksum-verified one-command installation.
+- Shared Docker contexts, Buildx builders, and CLI plugins between accounts.
+- Kept registry credentials isolated per account.
+- Improved interactive account selection and shell switching.
+
+[Unreleased]: https://github.com/smartcat999/docker-account/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/smartcat999/docker-account/releases/tag/v0.7.4

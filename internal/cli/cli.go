@@ -15,7 +15,7 @@ import (
 	"text/tabwriter"
 	"unicode/utf8"
 
-	"github.com/pengwu/docker-account/internal/accounts"
+	"github.com/smartcat999/docker-account/internal/accounts"
 	"golang.org/x/term"
 )
 
@@ -49,7 +49,7 @@ type addOptions struct {
 func Run(args []string, in io.Reader, out, errOut io.Writer, version string) int {
 	if len(args) > 0 && args[0] == "docker-cli-plugin-metadata" {
 		_ = json.NewEncoder(out).Encode(metadata{
-			SchemaVersion: "0.1.0", Vendor: "pengwu", Version: version,
+			SchemaVersion: "0.1.0", Vendor: "smartcat999", Version: version,
 			ShortDescription: "Manage multiple Docker registry accounts",
 		})
 		return 0

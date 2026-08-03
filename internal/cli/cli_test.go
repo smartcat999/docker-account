@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/pengwu/docker-account/internal/accounts"
+	"github.com/smartcat999/docker-account/internal/accounts"
 )
 
 func TestMetadata(t *testing.T) {
