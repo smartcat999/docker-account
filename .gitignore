@@ -1,0 +1,4 @@
+/bin/
+/docker-account
+*.test
+.DS_Store
