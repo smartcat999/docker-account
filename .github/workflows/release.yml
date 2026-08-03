@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [darwin, linux]
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+        run: |
+          go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o docker-account ./cmd/docker-account
+          tar -czf "docker-account_${GOOS}_${GOARCH}.tar.gz" docker-account
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-account-${{ matrix.os }}-${{ matrix.arch }}
+          path: docker-account_${{ matrix.os }}_${{ matrix.arch }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+          gh release create "$GITHUB_REF_NAME" *.tar.gz checksums.txt --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

@@ -6,12 +6,10 @@ Only credentials are isolated; Docker contexts, Buildx builders, and CLI plugins
 
 ## Install
 
-Requirements: Docker CLI and Go 1.25+.
+macOS or Linux:
 
 ```bash
-git clone https://github.com/smartcat999/docker-account.git
-cd docker-account
-make install
+curl -fsSL https://raw.githubusercontent.com/smartcat999/docker-account/main/install.sh | sh
 docker account version
 ```
 
@@ -55,3 +53,12 @@ docker account remove NAME
 Run `docker account COMMAND --help` for command-specific options.
 
 Account configs are isolated under `~/.docker/accounts`. On macOS, credentials remain in Keychain with an account-specific namespace, so accounts for the same registry do not overwrite each other.
+
+## Development
+
+Requires Go 1.25+:
+
+```bash
+make test
+make install
+```
