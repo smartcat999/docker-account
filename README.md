@@ -1,15 +1,12 @@
 <div align="center">
-
-# docker-account
-
-**Switch Docker registry accounts without logging in again.**
-
-[![Latest release](https://img.shields.io/github/v/release/smartcat999/docker-account?display_name=tag&style=flat-square)](https://github.com/smartcat999/docker-account/releases/latest)
-![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-2f81f7?style=flat-square)
-![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)
-
-A lightweight Docker CLI plugin for Docker Hub and private registry accounts.
-
+  <h1>docker-account</h1>
+  <p><strong>Switch Docker registry accounts without logging in again.</strong></p>
+  <p>
+    <a href="https://github.com/smartcat999/docker-account/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/smartcat999/docker-account?display_name=tag&amp;style=flat-square"></a>
+    <img alt="Platforms" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-2f81f7?style=flat-square">
+    <img alt="Go" src="https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white">
+  </p>
+  <p>A lightweight Docker CLI plugin for Docker Hub and private registry accounts.</p>
 </div>
 
 ## Why docker-account?
