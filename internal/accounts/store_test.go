@@ -75,11 +75,18 @@ func TestConfigureDockerCredentialStore(t *testing.T) {
 	if err := store.ConfigureDockerCredentialStore("work", "docker-account"); err != nil {
 		t.Fatal(err)
 	}
+	pluginDir := filepath.Join(t.TempDir(), "cli-plugins")
+	if err := store.ConfigureCLIPluginDir("work", pluginDir); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(filepath.Join(store.ConfigDir("work"), "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := string(data); !strings.Contains(got, `"credsStore": "docker-account"`) {
 		t.Fatalf("unexpected config: %s", got)
+	}
+	if got := string(data); !strings.Contains(got, `"cliPluginsExtraDirs"`) || !strings.Contains(got, pluginDir) {
+		t.Fatalf("plugin directory missing from config: %s", got)
 	}
 }

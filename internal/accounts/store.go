@@ -160,6 +160,35 @@ func (s *Store) SetCredentialStore(name, helper string) (Account, error) {
 }
 
 func (s *Store) ConfigureDockerCredentialStore(name, helper string) error {
+	return s.updateDockerConfig(name, func(config map[string]any) {
+		if _, ok := config["auths"]; !ok {
+			config["auths"] = map[string]any{}
+		}
+		config["credsStore"] = helper
+	})
+}
+
+func (s *Store) ConfigureCLIPluginDir(name, dir string) error {
+	dir = filepath.Clean(dir)
+	return s.updateDockerConfig(name, func(config map[string]any) {
+		dirs := make([]string, 0, 2)
+		seen := map[string]bool{}
+		if existing, ok := config["cliPluginsExtraDirs"].([]any); ok {
+			for _, value := range existing {
+				if item, ok := value.(string); ok && item != "" && !seen[item] {
+					dirs = append(dirs, item)
+					seen[item] = true
+				}
+			}
+		}
+		if !seen[dir] {
+			dirs = append(dirs, dir)
+		}
+		config["cliPluginsExtraDirs"] = dirs
+	})
+}
+
+func (s *Store) updateDockerConfig(name string, update func(map[string]any)) error {
 	path := filepath.Join(s.ConfigDir(name), "config.json")
 	config := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
@@ -169,10 +198,7 @@ func (s *Store) ConfigureDockerCredentialStore(name, helper string) error {
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if _, ok := config["auths"]; !ok {
-		config["auths"] = map[string]any{}
-	}
-	config["credsStore"] = helper
+	update(config)
 	return writeJSONAtomic(path, config)
 }
 

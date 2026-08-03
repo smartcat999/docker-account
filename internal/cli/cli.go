@@ -734,7 +734,14 @@ func (a *application) ensurePlugin(name string) error {
 	if a.exe == "" {
 		return nil
 	}
-	return a.store.EnsurePlugin(name, a.exe)
+	if err := a.store.EnsurePlugin(name, a.exe); err != nil {
+		return err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve Docker CLI plugin directory: %w", err)
+	}
+	return a.store.ConfigureCLIPluginDir(name, filepath.Join(home, ".docker", "cli-plugins"))
 }
 
 func (a *application) prepareCredentialHelper(account *accounts.Account) (string, error) {
