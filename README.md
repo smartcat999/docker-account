@@ -1,19 +1,12 @@
-<div align="center">
-  <h1>docker-account</h1>
-  <p><strong>Switch Docker registry accounts without logging in again.</strong></p>
-  <p>
-    <a href="https://github.com/smartcat999/docker-account/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/smartcat999/docker-account?display_name=tag&amp;style=flat-square"></a>
-    <img alt="Platforms" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-2f81f7?style=flat-square">
-    <img alt="Go" src="https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white">
-  </p>
-  <p>A lightweight Docker CLI plugin for Docker Hub and private registry accounts.</p>
-</div>
+# docker-account
 
-## Why docker-account?
+[![Release](https://img.shields.io/github/v/release/smartcat999/docker-account?style=flat-square)](https://github.com/smartcat999/docker-account/releases/latest)
+![macOS and Linux](https://img.shields.io/badge/macOS%20%7C%20Linux-supported-3b82f6?style=flat-square)
+![amd64 and arm64](https://img.shields.io/badge/amd64%20%7C%20arm64-supported-64748b?style=flat-square)
 
-- Switch accounts from an interactive terminal menu or by name.
-- Log in once; credentials remain isolated for each account.
-- Keep your existing Docker contexts, Buildx builders, and CLI plugins.
+Switch between Docker Hub or private registry accounts without logging in again.
+
+Credentials stay isolated per account while Docker contexts, Buildx builders, and CLI plugins remain shared.
 
 ## Install
 
