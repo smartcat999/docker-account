@@ -1,5 +1,5 @@
 BINARY := docker-account
-VERSION ?= v0.7.4
+VERSION ?= v0.7.5
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: build test install uninstall
