@@ -2,6 +2,8 @@
 
 A lightweight Docker CLI plugin for managing and switching between multiple Docker Hub or registry accounts.
 
+Only credentials are isolated; Docker contexts, Buildx builders, and CLI plugins stay shared.
+
 ## Install
 
 Requirements: Docker CLI and Go 1.25+.

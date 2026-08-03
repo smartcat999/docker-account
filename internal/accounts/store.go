@@ -188,6 +188,92 @@ func (s *Store) ConfigureCLIPluginDir(name, dir string) error {
 	})
 }
 
+// InheritDockerRuntimeConfig copies Docker CLI settings from the user's main
+// config while retaining the account-specific credential settings.
+func (s *Store) InheritDockerRuntimeConfig(name, dockerDir string) error {
+	sourcePath := filepath.Join(dockerDir, "config.json")
+	source := map[string]any{}
+	if data, err := os.ReadFile(sourcePath); err == nil && len(data) > 0 {
+		if err := json.Unmarshal(data, &source); err != nil {
+			return fmt.Errorf("decode %s: %w", sourcePath, err)
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	return s.updateDockerConfig(name, func(account map[string]any) {
+		for key, value := range source {
+			if !accountConfigKey(key) {
+				account[key] = value
+			}
+		}
+	})
+}
+
+func accountConfigKey(key string) bool {
+	switch key {
+	case "auths", "credsStore", "credHelpers", "cliPluginsExtraDirs":
+		return true
+	default:
+		return false
+	}
+}
+
+// ShareDockerRuntimeState makes contexts and Buildx builders independent of
+// the selected registry account. Existing account-local state is preserved as
+// a timestamped backup before it is replaced by a symlink.
+func (s *Store) ShareDockerRuntimeState(name, dockerDir string) error {
+	for _, entry := range []string{"contexts", "buildx"} {
+		source := filepath.Join(dockerDir, entry)
+		if _, err := os.Stat(source); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return fmt.Errorf("inspect shared Docker %s: %w", entry, err)
+		}
+		if err := s.ensureSharedPath(name, entry, source); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) ensureSharedPath(name, entry, source string) error {
+	target := filepath.Join(s.ConfigDir(name), entry)
+	if resolved, err := filepath.EvalSymlinks(target); err == nil {
+		wanted, resolveErr := filepath.EvalSymlinks(source)
+		if resolveErr == nil && resolved == wanted {
+			return nil
+		}
+	}
+
+	if info, err := os.Lstat(target); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			if err := os.Remove(target); err != nil {
+				return fmt.Errorf("replace Docker %s link: %w", entry, err)
+			}
+		} else {
+			stamp := s.Now().UTC().Format("20060102T150405Z")
+			backup := target + ".account-backup-" + stamp
+			for suffix := 1; ; suffix++ {
+				if _, err := os.Lstat(backup); errors.Is(err, os.ErrNotExist) {
+					break
+				}
+				backup = fmt.Sprintf("%s.account-backup-%s-%d", target, stamp, suffix)
+			}
+			if err := os.Rename(target, backup); err != nil {
+				return fmt.Errorf("preserve account Docker %s state: %w", entry, err)
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect account Docker %s: %w", entry, err)
+	}
+
+	if err := os.Symlink(source, target); err != nil {
+		return fmt.Errorf("share Docker %s state: %w", entry, err)
+	}
+	return nil
+}
+
 func (s *Store) updateDockerConfig(name string, update func(map[string]any)) error {
 	path := filepath.Join(s.ConfigDir(name), "config.json")
 	config := map[string]any{}

@@ -90,3 +90,72 @@ func TestConfigureDockerCredentialStore(t *testing.T) {
 		t.Fatalf("plugin directory missing from config: %s", got)
 	}
 }
+
+func TestInheritDockerRuntimeConfigPreservesCredentials(t *testing.T) {
+	store := New(t.TempDir())
+	if _, err := store.Add("work", "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureDockerCredentialStore("work", "docker-account"); err != nil {
+		t.Fatal(err)
+	}
+	dockerDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dockerDir, "config.json"), []byte(`{
+		"auths":{"docker.io":{"auth":"system"}},
+		"credsStore":"osxkeychain",
+		"currentContext":"orbstack",
+		"features":{"hooks":"true"}
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InheritDockerRuntimeConfig("work", dockerDir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(store.ConfigDir("work"), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if !strings.Contains(got, `"currentContext": "orbstack"`) || !strings.Contains(got, `"features"`) {
+		t.Fatalf("runtime config not inherited: %s", got)
+	}
+	if !strings.Contains(got, `"credsStore": "docker-account"`) || strings.Contains(got, `"auth": "system"`) {
+		t.Fatalf("account credentials overwritten: %s", got)
+	}
+}
+
+func TestShareDockerRuntimeStatePreservesExistingData(t *testing.T) {
+	store := New(t.TempDir())
+	store.Now = func() time.Time { return time.Date(2026, 8, 3, 1, 2, 3, 0, time.UTC) }
+	if _, err := store.Add("work", "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	dockerDir := t.TempDir()
+	for _, entry := range []string{"contexts", "buildx"} {
+		if err := os.Mkdir(filepath.Join(dockerDir, entry), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	localBuildx := filepath.Join(store.ConfigDir("work"), "buildx")
+	if err := os.Mkdir(localBuildx, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localBuildx, "state"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ShareDockerRuntimeState("work", dockerDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []string{"contexts", "buildx"} {
+		resolved, err := filepath.EvalSymlinks(filepath.Join(store.ConfigDir("work"), entry))
+		wanted, wantedErr := filepath.EvalSymlinks(filepath.Join(dockerDir, entry))
+		if err != nil || wantedErr != nil || resolved != wanted {
+			t.Fatalf("%s link = %q, err = %v", entry, resolved, err)
+		}
+	}
+	backup := localBuildx + ".account-backup-20260803T010203Z"
+	data, err := os.ReadFile(filepath.Join(backup, "state"))
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("existing Buildx state was not preserved: %q, %v", data, err)
+	}
+}

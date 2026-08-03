@@ -731,17 +731,24 @@ func (a *application) resolveName(args []string) (string, error) {
 }
 
 func (a *application) ensurePlugin(name string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve Docker CLI plugin directory: %w", err)
+	}
+	dockerDir := filepath.Join(home, ".docker")
+	if err := a.store.InheritDockerRuntimeConfig(name, dockerDir); err != nil {
+		return err
+	}
+	if err := a.store.ShareDockerRuntimeState(name, dockerDir); err != nil {
+		return err
+	}
 	if a.exe == "" {
 		return nil
 	}
 	if err := a.store.EnsurePlugin(name, a.exe); err != nil {
 		return err
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("resolve Docker CLI plugin directory: %w", err)
-	}
-	return a.store.ConfigureCLIPluginDir(name, filepath.Join(home, ".docker", "cli-plugins"))
+	return a.store.ConfigureCLIPluginDir(name, filepath.Join(dockerDir, "cli-plugins"))
 }
 
 func (a *application) prepareCredentialHelper(account *accounts.Account) (string, error) {
