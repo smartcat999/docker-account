@@ -1,5 +1,11 @@
 # Troubleshooting
 
+Start with the built-in diagnostic command:
+
+```bash
+docker account doctor
+```
+
 ## `docker: 'account' is not a docker command`
 
 Reinstall the plugin and verify that it is executable:

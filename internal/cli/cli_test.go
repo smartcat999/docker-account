@@ -49,11 +49,11 @@ func TestSubcommandHelpAfterPositionalArgument(t *testing.T) {
 }
 
 func TestParseAddArgsWithLogin(t *testing.T) {
-	options, err := parseAddArgs([]string{"default", "-u", "2030047311", "--password-stdin"})
+	options, err := parseAddArgs([]string{"personal", "-u", "alice", "--password-stdin"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.name != "default" || options.username != "2030047311" || !options.passwordStdin {
+	if options.name != "personal" || options.username != "alice" || !options.passwordStdin {
 		t.Fatalf("unexpected options: %+v", options)
 	}
 }
@@ -116,7 +116,7 @@ func TestUseInteractiveSelectionByNumber(t *testing.T) {
 	if _, err := store.Add("default", "alice", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Add("smartcat999", "bob", ""); err != nil {
+	if _, err := store.Add("company", "bob", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Use("default"); err != nil {
@@ -125,7 +125,7 @@ func TestUseInteractiveSelectionByNumber(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", store.StableConfigDir())
 	t.Setenv("DOCKER_ACCOUNT_NAME", "")
 	var out bytes.Buffer
-	app := application{store: store, in: strings.NewReader("2\n"), out: &out}
+	app := application{store: store, in: strings.NewReader("1\n"), out: &out}
 	if err := app.use(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -133,10 +133,10 @@ func TestUseInteractiveSelectionByNumber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current != "smartcat999" {
+	if current != "company" {
 		t.Fatalf("current = %q", current)
 	}
-	for _, expected := range []string{"Select a Docker account:", "default", "smartcat999", `Switched to Docker account "smartcat999".`} {
+	for _, expected := range []string{"Select a Docker account:", "default", "company", `Switched to Docker account "company".`} {
 		if !strings.Contains(out.String(), expected) {
 			t.Errorf("output missing %q:\n%s", expected, out.String())
 		}
@@ -173,7 +173,7 @@ func TestMoveSelectionWraps(t *testing.T) {
 }
 
 func TestSelectorTextLayout(t *testing.T) {
-	if got := padBetween("❯ account", "current  ● ready", 36); utf8.RuneCountInString(got) != 36 {
+	if got := padBetween("> account", "current  ready", 36); utf8.RuneCountInString(got) != 36 {
 		t.Fatalf("layout width = %d: %q", utf8.RuneCountInString(got), got)
 	}
 	if got := truncateText("a-very-long-account-name", 10); got != "a-very-lo…" {
@@ -182,18 +182,70 @@ func TestSelectorTextLayout(t *testing.T) {
 }
 
 func TestSelectorAccountUsesSingleLine(t *testing.T) {
-	item := accounts.Account{Name: "smartcat999", Username: "smartcat99999", Registry: "docker.io"}
+	item := accounts.Account{Name: "company", Username: "alice", Registry: "registry.example.com"}
 	got := selectorAccountText(item, true, true, true, 76)
 	if strings.Contains(got, "\n") {
 		t.Fatalf("account row contains a newline: %q", got)
 	}
-	for _, expected := range []string{"❯ smartcat999", "smartcat99999", "docker.io", "current", "● ready"} {
+	for _, expected := range []string{"> company", "alice", "registry.example.com", "current", "ready"} {
 		if !strings.Contains(got, expected) {
 			t.Errorf("row missing %q: %q", expected, got)
 		}
 	}
 	if width := utf8.RuneCountInString(got); width != 76 {
 		t.Fatalf("row width = %d: %q", width, got)
+	}
+}
+
+func TestSelectorUsesClassicANSIPalette(t *testing.T) {
+	store := accounts.New(t.TempDir())
+	if _, err := store.Add("work", "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("NO_COLOR", "")
+	var out bytes.Buffer
+	app := application{store: store, out: &out}
+	app.renderAccountSelector([]accounts.Account{{Name: "work", Username: "alice", Registry: "docker.io"}}, 0, 0, false)
+
+	got := out.String()
+	for _, expected := range []string{"\x1b[" + selectorAccentStyle + "m", "\x1b[" + selectorSelectedStyle + "m", "\x1b[" + selectorMutedStyle + "m"} {
+		if !strings.Contains(got, expected) {
+			t.Errorf("selector output missing classic ANSI style %q: %q", expected, got)
+		}
+	}
+	if strings.Contains(got, "38;5;45") || strings.Contains(got, "48;5;45") {
+		t.Fatalf("selector still contains cyan styling: %q", got)
+	}
+	if strings.Contains(got, "38;5;") || strings.Contains(got, "48;5;") {
+		t.Fatalf("selector uses fixed 256-color styling: %q", got)
+	}
+	if strings.Contains(got, "\x1b[31m") || strings.Contains(got, "\x1b[34m") || strings.Contains(got, "\x1b[35m") || strings.Contains(got, "\x1b[36m") {
+		t.Fatalf("selector uses more than one explicit color: %q", got)
+	}
+}
+
+func TestDoctorOutputParsing(t *testing.T) {
+	output := "Name:          my-builder\nDriver:        docker-container\n"
+	if got := firstDoctorValue(output, "Name:"); got != "my-builder" {
+		t.Fatalf("builder name = %q", got)
+	}
+	if got := firstLine("connection failed\nmore details"); got != "connection failed" {
+		t.Fatalf("first line = %q", got)
+	}
+}
+
+func TestDoctorHelp(t *testing.T) {
+	t.Setenv("DOCKER_ACCOUNT_HOME", t.TempDir())
+	var out, errOut bytes.Buffer
+	code := Run([]string{"doctor", "--help"}, strings.NewReader(""), &out, &errOut, "dev")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut.String())
+	}
+	for _, expected := range []string{"docker account doctor", "Docker context", "Buildx"} {
+		if !strings.Contains(out.String(), expected) {
+			t.Errorf("help missing %q: %s", expected, out.String())
+		}
 	}
 }
 

@@ -9,6 +9,8 @@ Switch between Docker Hub or private registry accounts without logging in again.
 
 Credentials stay isolated per account while Docker contexts, Buildx builders, and CLI plugins remain shared.
 
+![Interactive Docker account selector](docs/demo.png)
+
 ## Install
 
 ```bash
@@ -20,7 +22,7 @@ Prebuilt binaries are available for macOS and Linux on amd64 and arm64.
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smartcat999/docker-account/main/install.sh | VERSION=v0.7.5 sh
+curl -fsSL https://raw.githubusercontent.com/smartcat999/docker-account/main/install.sh | VERSION=v0.8.0 sh
 ```
 
 ## Quick start
@@ -76,6 +78,7 @@ Docker commands in the same shell now use the selected account.
 | `docker account logout NAME` | Remove an account's saved credentials |
 | `docker account remove NAME` | Remove an account definition |
 | `docker account shell [NAME]` | Open a child shell using an account |
+| `docker account doctor` | Diagnose account, Docker, context, and Buildx setup |
 
 Run `docker account COMMAND --help` for all options.
 

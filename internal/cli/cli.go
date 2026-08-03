@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 	"unicode/utf8"
 
 	"github.com/smartcat999/docker-account/internal/accounts"
@@ -20,6 +22,14 @@ import (
 )
 
 var errSelectionCanceled = errors.New("account selection canceled")
+
+const (
+	selectorBorderStyle   = ""
+	selectorAccentStyle   = "32" // the only explicit color
+	selectorCurrentStyle  = ""
+	selectorSelectedStyle = "7" // terminal-native reverse video
+	selectorMutedStyle    = "2"
+)
 
 type metadata struct {
 	SchemaVersion    string `json:"SchemaVersion"`
@@ -115,6 +125,8 @@ func (a *application) run(args []string) error {
 		return a.env(args[1:])
 	case "shell":
 		return a.shell(args[1:])
+	case "doctor":
+		return a.doctor(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q; run 'docker account --help'", args[0])
 	}
@@ -392,37 +404,37 @@ func (a *application) renderAccountSelector(items []accounts.Account, currentInd
 	width := a.selectorWidth()
 	innerWidth := width - 2
 	color := os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
-	border := func(value string) string { return ansiStyle(value, "38;5;45", color) }
+	border := func(value string) string { return ansiStyle(value, selectorBorderStyle, color) }
 
-	title := " Switch Docker account "
+	title := " Docker accounts "
 	topFill := width - utf8.RuneCountInString(title) - 3
 	if topFill < 1 {
 		topFill = 1
 	}
-	top := "╭─" + title + strings.Repeat("─", topFill) + "╮"
-	a.selectorRawLine(border(top))
+	top := border("┌─") + ansiStyle(title, selectorAccentStyle, color) + border(strings.Repeat("─", topFill)+"┐")
+	a.selectorRawLine(top)
 	for index, item := range items {
 		nameLine := selectorAccountText(item, index == selected, index == currentIndex, a.store.HasCredentials(item.Name), innerWidth)
 		nameStyle := ""
 		if index == selected {
-			nameStyle = "1;30;48;5;45"
+			nameStyle = selectorSelectedStyle
 		} else if index == currentIndex {
-			nameStyle = "1;38;5;45"
+			nameStyle = selectorCurrentStyle
 		}
 		a.selectorBoxLine(nameLine, innerWidth, nameStyle, color)
 	}
-	a.selectorBoxLine("  ↑/↓ navigate   enter select   q cancel", innerWidth, "38;5;244", color)
-	a.selectorRawLine(border("╰" + strings.Repeat("─", width-2) + "╯"))
+	a.selectorBoxLine("  ↑/↓ move   Enter select   q quit", innerWidth, selectorMutedStyle, color)
+	a.selectorRawLine(border("└" + strings.Repeat("─", width-2) + "┘"))
 }
 
 func selectorAccountText(item accounts.Account, selected, current, configured bool, width int) string {
 	pointer := "  "
 	if selected {
-		pointer = "❯ "
+		pointer = "> "
 	}
-	status := "○ login required"
+	status := "login required"
 	if configured {
-		status = "● ready"
+		status = "ready"
 	}
 	if current {
 		status = "current  " + status
@@ -482,8 +494,8 @@ func (a *application) selectorBoxLine(value string, width int, style string, col
 		padding = 0
 	}
 	content := value + strings.Repeat(" ", padding)
-	left := ansiStyle("│", "38;5;45", color)
-	right := ansiStyle("│", "38;5;45", color)
+	left := ansiStyle("│", selectorBorderStyle, color)
+	right := ansiStyle("│", selectorBorderStyle, color)
 	fmt.Fprintf(a.out, "\r\x1b[2K%s%s%s\r\n", left, ansiStyle(content, style, color), right)
 }
 
@@ -706,6 +718,121 @@ func (a *application) shell(args []string) error {
 	return a.runCommand(shell, nil, env)
 }
 
+func (a *application) doctor(args []string) error {
+	if len(args) != 0 {
+		return errors.New("usage: docker account doctor")
+	}
+	color := terminalOutputColor(a.out)
+	fmt.Fprintln(a.out, ansiStyle("Docker account doctor", selectorAccentStyle, color))
+
+	failures := 0
+	report := func(symbol, style, message string) {
+		fmt.Fprintf(a.out, "%s %s\n", ansiStyle(symbol, style, color), message)
+	}
+	pass := func(message string) { report("✓", "32", message) }
+	warn := func(message string) { report("!", "33", message) }
+	fail := func(message string) {
+		failures++
+		report("✗", "31", message)
+	}
+
+	pass("plugin " + a.version)
+	if path, err := exec.LookPath("docker"); err != nil {
+		fail("Docker CLI not found in PATH")
+	} else {
+		pass("Docker CLI " + path)
+	}
+
+	current, err := a.store.Current()
+	if err != nil {
+		fail("cannot read current account: " + err.Error())
+	} else if current == "" {
+		fail("no Docker account selected")
+	} else if account, getErr := a.store.Get(current); getErr != nil {
+		fail("current account is invalid: " + getErr.Error())
+	} else {
+		pass(fmt.Sprintf("current account %s (%s@%s)", account.Name, account.Username, account.Registry))
+		if a.store.HasCredentials(current) {
+			pass("credentials configured")
+		} else {
+			warn("credentials missing; run docker account login " + current)
+		}
+	}
+
+	if a.shellIntegrationActive() {
+		pass("shell integration active")
+	} else {
+		warn(`shell integration inactive; run eval "$(docker account env)"`)
+	}
+
+	env := setEnv(os.Environ(), "DOCKER_CONFIG", a.store.StableConfigDir())
+	if output, commandErr := doctorCommand(env, 5*time.Second, "context", "show"); commandErr != nil {
+		fail("Docker context unavailable: " + commandErr.Error())
+	} else {
+		pass("Docker context " + output)
+	}
+	if output, commandErr := doctorCommand(env, 8*time.Second, "version", "--format", "{{.Server.Version}}"); commandErr != nil {
+		fail("Docker daemon unavailable: " + commandErr.Error())
+	} else {
+		pass("Docker daemon " + output)
+	}
+	if output, commandErr := doctorCommand(env, 8*time.Second, "buildx", "inspect"); commandErr != nil {
+		fail("Buildx unavailable: " + commandErr.Error())
+	} else if name := firstDoctorValue(output, "Name:"); name != "" {
+		pass("Buildx builder " + name)
+	} else {
+		pass("Buildx available")
+	}
+
+	if failures > 0 {
+		return fmt.Errorf("doctor found %d problem(s)", failures)
+	}
+	return nil
+}
+
+func doctorCommand(environment []string, timeout time.Duration, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, "docker", args...)
+	command.Env = environment
+	output, err := command.CombinedOutput()
+	value := strings.TrimSpace(string(output))
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", errors.New("timed out")
+	}
+	if err != nil {
+		if value != "" {
+			return "", errors.New(firstLine(value))
+		}
+		return "", err
+	}
+	return value, nil
+}
+
+func firstDoctorValue(output, prefix string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
+func firstLine(value string) string {
+	if index := strings.IndexByte(value, '\n'); index >= 0 {
+		return value[:index]
+	}
+	return value
+}
+
+func terminalOutputColor(output io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	file, ok := output.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
 func (a *application) resolveName(args []string) (string, error) {
 	if len(args) > 1 {
 		return "", errors.New("expected zero or one account name")
@@ -830,6 +957,7 @@ Commands:
   remove    Remove an account and its isolated credentials
   env       Print shell exports for the selected account
   shell     Open a child shell using the selected account
+  doctor    Diagnose account, Docker, context, and Buildx setup
   version   Print the plugin version
 
 Examples:
@@ -928,6 +1056,12 @@ Exit the child shell to restore the previous environment.
 		help = `Usage:  docker account version
 
 Print the Docker CLI plugin version.
+`
+	case "doctor":
+		help = `Usage:  docker account doctor
+
+Check the selected account, credentials, shell integration, Docker context,
+daemon connection, and active Buildx builder.
 `
 	default:
 		return fmt.Errorf("unknown command %q; run 'docker account --help'", command)
