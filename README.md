@@ -1,34 +1,50 @@
+<div align="center">
+
 # docker-account
 
-A lightweight Docker CLI plugin for managing and switching between multiple Docker Hub or registry accounts.
+**Switch Docker registry accounts without logging in again.**
 
-Only credentials are isolated; Docker contexts, Buildx builders, and CLI plugins stay shared.
+[![Latest release](https://img.shields.io/github/v/release/smartcat999/docker-account?display_name=tag&style=flat-square)](https://github.com/smartcat999/docker-account/releases/latest)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-2f81f7?style=flat-square)
+![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)
+
+A lightweight Docker CLI plugin for Docker Hub and private registry accounts.
+
+</div>
+
+## Why docker-account?
+
+- Switch accounts from an interactive terminal menu or by name.
+- Log in once; credentials remain isolated for each account.
+- Keep your existing Docker contexts, Buildx builders, and CLI plugins.
 
 ## Install
 
-macOS or Linux:
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smartcat999/docker-account/main/install.sh | sh
-docker account version
 ```
+
+Prebuilt binaries are available for macOS and Linux on amd64 and arm64.
 
 ## Quick start
 
-Add an account and log in with a password or Docker Hub access token:
+Add an account and securely enter a password or access token:
 
 ```bash
 docker account add personal --username your-docker-id --login
 ```
 
-Enable switching once in Zsh:
+Enable account switching once for your shell:
 
 ```bash
+# Zsh
 echo 'eval "$(docker account env)"' >> ~/.zshrc
 source ~/.zshrc
+
+# Bash: use ~/.bashrc instead
 ```
 
-Select interactively with the arrow keys:
+Open the interactive selector:
 
 ```bash
 docker account use
@@ -38,21 +54,36 @@ Or switch directly:
 
 ```bash
 docker account use personal
+docker account current
 ```
+
+Docker commands in the same shell now use the selected account.
 
 ## Commands
 
-```bash
-docker account list
-docker account current
-docker account login NAME
-docker account logout NAME
-docker account remove NAME
-```
+| Command | Description |
+| --- | --- |
+| `docker account add NAME -u USER [--login]` | Add an account and optionally log in |
+| `docker account use [NAME]` | Select interactively or switch by name |
+| `docker account list` | Show accounts, current selection, and credential status |
+| `docker account login NAME` | Save credentials for an account |
+| `docker account logout NAME` | Remove an account's saved credentials |
+| `docker account remove NAME` | Remove an account definition |
+| `docker account shell [NAME]` | Open a child shell using an account |
 
-Run `docker account COMMAND --help` for command-specific options.
+Run `docker account COMMAND --help` for all options.
 
-Account configs are isolated under `~/.docker/accounts`. On macOS, credentials remain in Keychain with an account-specific namespace, so accounts for the same registry do not overwrite each other.
+## How it works
+
+Account credentials are stored separately under `~/.docker/accounts`. Docker runtime configuration stays shared:
+
+| Isolated per account | Shared with Docker |
+| --- | --- |
+| Registry credentials | Contexts and daemon endpoints |
+| Credential helper namespace | Buildx builders |
+| Current account selection | CLI plugins |
+
+On macOS, credentials remain in Keychain with an account-specific namespace. Removing an account does not delete shared Docker contexts or builders.
 
 ## Development
 
