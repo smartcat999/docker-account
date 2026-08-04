@@ -2,6 +2,7 @@
 set -eu
 
 repo="smartcat999/docker-account"
+release_version="latest"
 install_dir="${DOCKER_CLI_PLUGIN_DIR:-${HOME}/.docker/cli-plugins}"
 
 case "$(uname -s)" in
@@ -17,8 +18,9 @@ case "$(uname -m)" in
 esac
 
 archive="docker-account_${os}_${arch}.tar.gz"
-if [ -n "${VERSION:-}" ]; then
-  release_url="https://github.com/${repo}/releases/download/${VERSION}"
+version="${VERSION:-$release_version}"
+if [ "$version" != "latest" ]; then
+  release_url="https://github.com/${repo}/releases/download/${version}"
 else
   release_url="https://github.com/${repo}/releases/latest/download"
 fi

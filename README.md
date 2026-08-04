@@ -14,7 +14,7 @@ Credentials stay isolated per account while Docker contexts, Buildx builders, an
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smartcat999/docker-account/main/install.sh | sh
+curl -fsSL https://github.com/smartcat999/docker-account/releases/latest/download/install.sh | sh
 ```
 
 Prebuilt binaries are available for macOS and Linux on amd64 and arm64.
@@ -22,7 +22,7 @@ Prebuilt binaries are available for macOS and Linux on amd64 and arm64.
 To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smartcat999/docker-account/main/install.sh | VERSION=v0.8.0 sh
+curl -fsSL https://github.com/smartcat999/docker-account/releases/download/v0.8.1/install.sh | sh
 ```
 
 ## Quick start

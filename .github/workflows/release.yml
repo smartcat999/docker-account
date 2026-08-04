@@ -37,14 +37,21 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+      - name: Prepare versioned installer
+        run: |
+          grep -q '^release_version="latest"$' install.sh
+          sed "s/^release_version=\"latest\"$/release_version=\"${GITHUB_REF_NAME}\"/" install.sh > dist/install.sh
+          chmod 755 dist/install.sh
+          sh -n dist/install.sh
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist
-          sha256sum *.tar.gz > checksums.txt
-          gh release create "$GITHUB_REF_NAME" *.tar.gz checksums.txt --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          sha256sum *.tar.gz install.sh > checksums.txt
+          gh release create "$GITHUB_REF_NAME" *.tar.gz install.sh checksums.txt --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

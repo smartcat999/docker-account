@@ -11,7 +11,7 @@ docker account doctor
 Reinstall the plugin and verify that it is executable:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smartcat999/docker-account/main/install.sh | sh
+curl -fsSL https://github.com/smartcat999/docker-account/releases/latest/download/install.sh | sh
 docker account version
 ```
 
