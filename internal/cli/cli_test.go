@@ -89,7 +89,7 @@ func TestUseOutputWhenShellIntegrationIsActive(t *testing.T) {
 	if err := app.use([]string{"work"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); got != "✓ Switched to work.\n" {
+	if got := out.String(); got != "✓ Docker Hub now uses work.\n" {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }
@@ -136,14 +136,14 @@ func TestUseInteractiveSelectionByNumber(t *testing.T) {
 	if current != "company" {
 		t.Fatalf("current = %q", current)
 	}
-	for _, expected := range []string{"Select a Docker account:", "default", "company", "✓ Switched to company."} {
+	for _, expected := range []string{"Select a Docker account:", "default", "company", "✓ Docker Hub now uses company."} {
 		if !strings.Contains(out.String(), expected) {
 			t.Errorf("output missing %q:\n%s", expected, out.String())
 		}
 	}
 }
 
-func TestUseInteractiveDefaultsToCurrentAccount(t *testing.T) {
+func TestUseInteractiveRequiresMultipleAccounts(t *testing.T) {
 	store := accounts.New(t.TempDir())
 	if _, err := store.Add("work", "alice", ""); err != nil {
 		t.Fatal(err)
@@ -155,11 +155,8 @@ func TestUseInteractiveDefaultsToCurrentAccount(t *testing.T) {
 	t.Setenv("DOCKER_ACCOUNT_NAME", "")
 	var out bytes.Buffer
 	app := application{store: store, in: strings.NewReader("\n"), out: &out}
-	if err := app.use(nil); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "Enter number or name [1]") {
-		t.Fatalf("unexpected output:\n%s", out.String())
+	if err := app.use(nil); err == nil || !strings.Contains(err.Error(), "multiple accounts") {
+		t.Fatalf("expected no-switchable-account error, got %v", err)
 	}
 }
 
@@ -169,6 +166,34 @@ func TestMoveSelectionWraps(t *testing.T) {
 	}
 	if got := moveSelection(1, 1, 2); got != 0 {
 		t.Fatalf("move down from last = %d", got)
+	}
+}
+
+func TestSwitchableGroupsAreRegistryScoped(t *testing.T) {
+	store := accounts.New(t.TempDir())
+	for _, item := range []struct{ name, registry string }{
+		{"hub-a", "docker.io"}, {"hub-b", "docker.io"},
+		{"harbor-a", "harbor.example.com"}, {"harbor-b", "harbor.example.com"},
+		{"single", "single.example.com"},
+	} {
+		if _, err := store.Add(item.name, item.name, item.registry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Use("hub-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Use("harbor-b"); err != nil {
+		t.Fatal(err)
+	}
+	app := application{store: store}
+	items, _ := store.List()
+	groups, err := app.switchableAccountGroups(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 || groups[0].Registry != "docker.io" || groups[0].Active != "hub-a" {
+		t.Fatalf("groups = %+v", groups)
 	}
 }
 
@@ -265,7 +290,7 @@ func TestSelectorUsesClassicANSIPalette(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	var out bytes.Buffer
 	app := application{store: store, out: &out}
-	app.renderAccountSelector([]accounts.Account{{Name: "work", Username: "alice", Registry: "docker.io"}}, 0, 0, false)
+	app.renderAccountSelector([]accounts.Account{{Name: "work", Username: "alice", Registry: "docker.io"}}, 0, 0, false, "Docker Hub", false)
 
 	got := out.String()
 	for _, expected := range []string{"\x1b[" + selectorAccentStyle + "m", "\x1b[" + selectorSelectedStyle + "m", "\x1b[" + selectorMutedStyle + "m"} {
@@ -281,6 +306,22 @@ func TestSelectorUsesClassicANSIPalette(t *testing.T) {
 	}
 	if strings.Contains(got, "\x1b[31m") || strings.Contains(got, "\x1b[34m") || strings.Contains(got, "\x1b[35m") || strings.Contains(got, "\x1b[36m") {
 		t.Fatalf("selector uses more than one explicit color: %q", got)
+	}
+}
+
+func TestRegistrySelectorShowsActiveProfiles(t *testing.T) {
+	t.Setenv("TERM", "dumb")
+	var out bytes.Buffer
+	app := application{out: &out}
+	app.renderRegistrySelector([]accountGroup{
+		{Registry: "docker.io", Active: "default"},
+		{Registry: "harbor.example.com", Active: "harbor-admin"},
+	}, 0, false)
+	got := out.String()
+	for _, expected := range []string{"Choose a registry", "Docker Hub", "default ●", "harbor.example.com", "harbor-admin ●", "enter choose"} {
+		if !strings.Contains(got, expected) {
+			t.Errorf("selector missing %q:\n%s", expected, got)
+		}
 	}
 }
 

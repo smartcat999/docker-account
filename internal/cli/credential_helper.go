@@ -24,40 +24,51 @@ func RunCredentialHelper(args []string, in io.Reader, out, errOut io.Writer) int
 		fmt.Fprintln(errOut, "credential helper expects one of: store, get, erase")
 		return 1
 	}
-	name := strings.TrimSpace(os.Getenv("DOCKER_ACCOUNT_NAME"))
-	if name == "" {
-		root, err := accounts.DefaultRoot()
-		if err != nil {
-			fmt.Fprintln(errOut, err)
-			return 1
-		}
-		name, err = accounts.New(root).Current()
-		if err != nil {
-			fmt.Fprintln(errOut, err)
-			return 1
-		}
-		if name == "" {
-			fmt.Fprintln(errOut, "no current Docker account is selected")
-			return 1
-		}
-	}
 	root, err := accounts.DefaultRoot()
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
-	account, err := accounts.New(root).Get(name)
+	store := accounts.New(root)
+	payload, err := io.ReadAll(in)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
+	server, err := credentialServer(args[0], payload)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
+	name := strings.TrimSpace(os.Getenv("DOCKER_ACCOUNT_NAME"))
+	if name != "" {
+		override, getErr := store.Get(name)
+		if getErr != nil {
+			fmt.Fprintln(errOut, getErr)
+			return 1
+		}
+		if accounts.RegistryKey(override.Registry) != accounts.RegistryKey(server) {
+			name = ""
+		}
+	}
+	if name == "" {
+		name, err = store.ActiveName(server)
+		if err != nil {
+			fmt.Fprintln(errOut, err)
+			return 1
+		}
+	}
+	if name == "" {
+		fmt.Fprintf(errOut, "no active Docker account for %s\n", accounts.RegistryKey(server))
+		return 1
+	}
+	account, err := store.Get(name)
 	if err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
 	if account.CredentialStore == "" || account.CredentialStore == "docker-account" {
 		fmt.Fprintln(errOut, "account has no native credential store configured")
-		return 1
-	}
-	payload, err := io.ReadAll(in)
-	if err != nil {
-		fmt.Fprintln(errOut, err)
 		return 1
 	}
 	payload, err = namespaceCredentialPayload(args[0], payload, name)
@@ -73,6 +84,26 @@ func RunCredentialHelper(args []string, in io.Reader, out, errOut io.Writer) int
 		return exitCode(err)
 	}
 	return 0
+}
+
+func credentialServer(operation string, payload []byte) (string, error) {
+	if operation == "store" {
+		var value struct {
+			ServerURL string
+		}
+		if err := json.Unmarshal(payload, &value); err != nil {
+			return "", fmt.Errorf("decode credential payload: %w", err)
+		}
+		if value.ServerURL == "" {
+			return "", errors.New("credential payload has no ServerURL")
+		}
+		return value.ServerURL, nil
+	}
+	server := strings.TrimSpace(string(payload))
+	if server == "" {
+		return "", errors.New("credential payload has no server URL")
+	}
+	return server, nil
 }
 
 func namespaceCredentialPayload(operation string, payload []byte, account string) ([]byte, error) {

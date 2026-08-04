@@ -1,6 +1,8 @@
 package accounts
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +43,62 @@ func TestAccountLifecycle(t *testing.T) {
 	current, err = store.Current()
 	if err != nil || current != "" {
 		t.Fatalf("current after remove = %q, err = %v", current, err)
+	}
+}
+
+func TestActiveAccountsAreIndependentPerRegistry(t *testing.T) {
+	store := New(t.TempDir())
+	for _, item := range []struct{ name, user, registry string }{
+		{"hub-a", "alice", "docker.io"},
+		{"hub-b", "bob", "docker.io"},
+		{"harbor-a", "admin", "harbor.example.com"},
+		{"harbor-b", "robot", "harbor.example.com"},
+	} {
+		if _, err := store.Add(item.name, item.user, item.registry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Use("hub-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Use("harbor-b"); err != nil {
+		t.Fatal(err)
+	}
+	active, err := store.ActiveAccounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active["docker.io"] != "hub-a" || active["harbor.example.com"] != "harbor-b" {
+		t.Fatalf("active accounts = %+v", active)
+	}
+	if err := store.Use("hub-b"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := store.ActiveName("harbor.example.com"); got != "harbor-b" {
+		t.Fatalf("switching Docker Hub changed Harbor to %q", got)
+	}
+}
+
+func TestLegacyStateActivatesSingleAccountRegistries(t *testing.T) {
+	store := New(t.TempDir())
+	if _, err := store.Add("default", "alice", "docker.io"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Add("other", "bob", "docker.io"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Add("harbor", "admin", "harbor.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(store.statePath(), state{Current: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	active, err := store.ActiveAccounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active["docker.io"] != "default" || active["harbor.example.com"] != "harbor" {
+		t.Fatalf("migrated active accounts = %+v", active)
 	}
 }
 
@@ -88,6 +146,42 @@ func TestConfigureDockerCredentialStore(t *testing.T) {
 	}
 	if got := string(data); !strings.Contains(got, `"cliPluginsExtraDirs"`) || !strings.Contains(got, pluginDir) {
 		t.Fatalf("plugin directory missing from config: %s", got)
+	}
+}
+
+func TestSetInlineCredentialReplacesHelperWithoutRemovingOtherAuths(t *testing.T) {
+	store := New(t.TempDir())
+	if _, err := store.Add("work", "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureDockerCredentialStore("work", "docker-account"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureRegistryAuth("work", "registry.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetInlineCredential("work", "https://index.docker.io/v1/", "alice", "test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(store.ConfigDir("work"), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := config["credsStore"]; exists {
+		t.Fatalf("credential helper was not removed: %s", data)
+	}
+	auths := config["auths"].(map[string]any)
+	if _, exists := auths["registry.example.com"]; !exists {
+		t.Fatalf("existing registry was removed: %s", data)
+	}
+	entry := auths["https://index.docker.io/v1/"].(map[string]any)
+	decoded, err := base64.StdEncoding.DecodeString(entry["auth"].(string))
+	if err != nil || string(decoded) != "alice:test-secret" {
+		t.Fatalf("credential was not encoded correctly")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -21,7 +22,10 @@ import (
 	"golang.org/x/term"
 )
 
-var errSelectionCanceled = errors.New("account selection canceled")
+var (
+	errSelectionCanceled = errors.New("account selection canceled")
+	errSelectionBack     = errors.New("account selection back")
+)
 
 const (
 	selectorBorderStyle   = ""
@@ -39,12 +43,13 @@ type metadata struct {
 }
 
 type application struct {
-	store   *accounts.Store
-	in      io.Reader
-	out     io.Writer
-	errOut  io.Writer
-	version string
-	exe     string
+	store            *accounts.Store
+	in               io.Reader
+	out              io.Writer
+	errOut           io.Writer
+	version          string
+	exe              string
+	credentialRunner credentialCommand
 }
 
 type addOptions struct {
@@ -108,6 +113,8 @@ func (a *application) run(args []string) error {
 		return nil
 	case "add":
 		return a.add(args[1:])
+	case "import":
+		return a.importAccounts(args[1:])
 	case "list", "ls":
 		return a.list(args[1:])
 	case "current":
@@ -143,14 +150,8 @@ func (a *application) add(args []string) error {
 	if err := a.ensurePlugin(options.name); err != nil {
 		return err
 	}
-	current, err := a.store.Current()
-	if err != nil {
+	if _, err := a.store.ActivateIfUnset(options.name); err != nil {
 		return err
-	}
-	if current == "" {
-		if err := a.store.Use(options.name); err != nil {
-			return err
-		}
 	}
 	fmt.Fprintf(a.out, "Added account %q for %s at %s.\n", account.Name, account.Username, account.Registry)
 	if options.login || options.passwordStdin {
@@ -207,7 +208,7 @@ func (a *application) list(args []string) error {
 	if err != nil {
 		return err
 	}
-	current, err := a.store.Current()
+	active, err := a.store.ActiveAccounts()
 	if err != nil {
 		return err
 	}
@@ -216,10 +217,10 @@ func (a *application) list(args []string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(a.out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tUSERNAME\tREGISTRY\tCURRENT\tCREDENTIALS")
+	fmt.Fprintln(w, "NAME\tUSERNAME\tREGISTRY\tACTIVE\tCREDENTIALS")
 	for _, item := range items {
 		marker, status := "", "missing"
-		if item.Name == current {
+		if item.Name == active[accounts.RegistryKey(item.Registry)] {
 			marker = "*"
 		}
 		if a.store.HasCredentials(item.Name) {
@@ -231,8 +232,36 @@ func (a *application) list(args []string) error {
 }
 
 func (a *application) current(args []string) error {
-	if len(args) != 0 {
-		return errors.New("usage: docker account current")
+	if len(args) > 1 {
+		return errors.New("usage: docker account current [REGISTRY|--all]")
+	}
+	if len(args) == 1 && args[0] == "--all" {
+		active, err := a.store.ActiveAccounts()
+		if err != nil {
+			return err
+		}
+		registries := make([]string, 0, len(active))
+		for registry := range active {
+			registries = append(registries, registry)
+		}
+		sort.Strings(registries)
+		w := tabwriter.NewWriter(a.out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(w, "REGISTRY\tPROFILE")
+		for _, registry := range registries {
+			fmt.Fprintf(w, "%s\t%s\n", registryDisplay(registry), active[registry])
+		}
+		return w.Flush()
+	}
+	if len(args) == 1 {
+		name, err := a.store.ActiveName(args[0])
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			return fmt.Errorf("no active account for %s", accounts.RegistryKey(args[0]))
+		}
+		fmt.Fprintln(a.out, name)
+		return nil
 	}
 	name, err := a.store.Current()
 	if err != nil {
@@ -246,13 +275,62 @@ func (a *application) current(args []string) error {
 }
 
 func (a *application) use(args []string) error {
-	if len(args) > 1 {
-		return errors.New("usage: docker account use [NAME]")
+	if len(args) > 2 {
+		return errors.New("usage: docker account use [NAME] [--registry REGISTRY]")
 	}
 	name := ""
-	if len(args) == 1 {
+	registry := ""
+	if len(args) == 2 && args[0] == "--registry" {
+		registry = args[1]
+	} else if len(args) == 1 && strings.HasPrefix(args[0], "--registry=") {
+		registry = strings.TrimPrefix(args[0], "--registry=")
+	} else if len(args) == 1 {
 		name = args[0]
+	} else if len(args) != 0 {
+		return errors.New("usage: docker account use [NAME] [--registry REGISTRY]")
 	} else {
+		if a.interactiveTerminal() {
+			items, err := a.store.List()
+			if err != nil {
+				return err
+			}
+			if len(items) == 0 {
+				result, err := a.importSystemAccounts()
+				if err != nil {
+					return err
+				}
+				if result.Declined || result.Found == 0 {
+					return nil
+				}
+			}
+		}
+	}
+	if registry != "" {
+		items, err := a.store.List()
+		if err != nil {
+			return err
+		}
+		active, err := a.store.ActiveName(registry)
+		if err != nil {
+			return err
+		}
+		group := accountGroup{Registry: accounts.RegistryKey(registry), Active: active}
+		for _, item := range items {
+			if accounts.RegistryKey(item.Registry) == group.Registry {
+				group.Items = append(group.Items, item)
+			}
+		}
+		if len(group.Items) == 0 {
+			return fmt.Errorf("no accounts configured for %s", accounts.RegistryKey(registry))
+		}
+		name, err = a.selectAccountGroup(group, false)
+		if err != nil {
+			if errors.Is(err, errSelectionCanceled) {
+				return nil
+			}
+			return err
+		}
+	} else if name == "" {
 		var err error
 		name, err = a.selectAccount()
 		if err != nil {
@@ -293,10 +371,10 @@ func (a *application) use(args []string) error {
 		return err
 	}
 	if a.shellIntegrationActive() {
-		fmt.Fprintf(a.out, "✓ Switched to %s.\n", name)
+		fmt.Fprintf(a.out, "✓ %s now uses %s.\n", registryDisplay(account.Registry), name)
 		return nil
 	}
-	fmt.Fprintf(a.out, "Selected Docker account %q, but the current shell is not activated.\n", name)
+	fmt.Fprintf(a.out, "Selected %q for %s, but the current shell is not activated.\n", name, registryDisplay(account.Registry))
 	fmt.Fprintln(a.out, "Run once in this shell: eval \"$(docker account env)\"")
 	return nil
 }
@@ -332,20 +410,184 @@ func (a *application) selectAccount() (string, error) {
 	if len(items) == 0 {
 		return "", errors.New("no accounts configured; run 'docker account add --help'")
 	}
-	current, err := a.store.Current()
+	groups, err := a.switchableAccountGroups(items)
 	if err != nil {
 		return "", err
 	}
-	currentIndex := -1
-	for index, item := range items {
-		if item.Name == current {
-			currentIndex = index
+	if len(groups) == 0 {
+		return "", errors.New("no registry has multiple accounts to switch")
+	}
+	if len(groups) == 1 {
+		return a.selectAccountGroup(groups[0], false)
+	}
+	if !a.interactiveTerminal() {
+		group, err := a.selectRegistryLine(groups)
+		if err != nil {
+			return "", err
+		}
+		return a.selectAccountGroup(group, false)
+	}
+	for {
+		group, err := a.selectRegistryTTY(a.in.(*os.File), groups)
+		if err != nil {
+			return "", err
+		}
+		name, err := a.selectAccountGroup(group, true)
+		if errors.Is(err, errSelectionBack) {
+			continue
+		}
+		return name, err
+	}
+}
+
+type accountGroup struct {
+	Registry string
+	Active   string
+	Items    []accounts.Account
+}
+
+func (a *application) switchableAccountGroups(items []accounts.Account) ([]accountGroup, error) {
+	active, err := a.store.ActiveAccounts()
+	if err != nil {
+		return nil, err
+	}
+	byRegistry := map[string][]accounts.Account{}
+	for _, item := range items {
+		key := accounts.RegistryKey(item.Registry)
+		byRegistry[key] = append(byRegistry[key], item)
+	}
+	groups := make([]accountGroup, 0, len(byRegistry))
+	for registry, grouped := range byRegistry {
+		if len(grouped) < 2 {
+			continue
+		}
+		groups = append(groups, accountGroup{Registry: registry, Active: active[registry], Items: grouped})
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].Registry == accounts.DefaultRegistry {
+			return true
+		}
+		if groups[j].Registry == accounts.DefaultRegistry {
+			return false
+		}
+		return groups[i].Registry < groups[j].Registry
+	})
+	return groups, nil
+}
+
+func (a *application) selectAccountGroup(group accountGroup, back bool) (string, error) {
+	activeIndex := -1
+	for index, item := range group.Items {
+		if item.Name == group.Active {
+			activeIndex = index
 		}
 	}
 	if a.interactiveTerminal() {
-		return a.selectAccountTTY(a.in.(*os.File), items, currentIndex)
+		return a.selectAccountTTY(a.in.(*os.File), group.Items, activeIndex, registryDisplay(group.Registry), back)
 	}
-	return a.selectAccountLine(items, currentIndex)
+	return a.selectAccountLine(group.Items, activeIndex)
+}
+
+func (a *application) selectRegistryLine(groups []accountGroup) (accountGroup, error) {
+	fmt.Fprintln(a.out, "Select a Docker registry:")
+	for index, group := range groups {
+		fmt.Fprintf(a.out, "  %d) %-32s %s\n", index+1, registryDisplay(group.Registry), group.Active)
+	}
+	fmt.Fprint(a.out, "Enter number or registry: ")
+	value, err := bufio.NewReader(a.in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return accountGroup{}, err
+	}
+	value = strings.TrimSpace(value)
+	if number, convertErr := strconv.Atoi(value); convertErr == nil && number >= 1 && number <= len(groups) {
+		return groups[number-1], nil
+	}
+	for _, group := range groups {
+		if accounts.RegistryKey(value) == group.Registry {
+			return group, nil
+		}
+	}
+	return accountGroup{}, fmt.Errorf("registry %q is not in the list", value)
+}
+
+func (a *application) selectRegistryTTY(input *os.File, groups []accountGroup) (accountGroup, error) {
+	selected := 0
+	state, err := term.MakeRaw(int(input.Fd()))
+	if err != nil {
+		return accountGroup{}, fmt.Errorf("enable interactive terminal: %w", err)
+	}
+	defer term.Restore(int(input.Fd()), state)
+	fmt.Fprint(a.out, "\x1b[?25l")
+	defer fmt.Fprint(a.out, "\x1b[?25h")
+	rendered := false
+	for {
+		a.renderRegistrySelector(groups, selected, rendered)
+		rendered = true
+		var key [1]byte
+		if _, err := input.Read(key[:]); err != nil {
+			return accountGroup{}, errSelectionCanceled
+		}
+		switch key[0] {
+		case '\r', '\n':
+			return groups[selected], nil
+		case 3, 'q', 'Q':
+			return accountGroup{}, errSelectionCanceled
+		case 'j':
+			selected = moveSelection(selected, 1, len(groups))
+		case 'k':
+			selected = moveSelection(selected, -1, len(groups))
+		case 27:
+			var sequence [2]byte
+			if _, err := io.ReadFull(input, sequence[:]); err != nil || sequence[0] != '[' {
+				return accountGroup{}, errSelectionCanceled
+			}
+			switch sequence[1] {
+			case 'A':
+				selected = moveSelection(selected, -1, len(groups))
+			case 'B':
+				selected = moveSelection(selected, 1, len(groups))
+			}
+		}
+	}
+}
+
+func (a *application) renderRegistrySelector(groups []accountGroup, selected int, redraw bool) {
+	lineCount := len(groups) + 4
+	if redraw {
+		fmt.Fprintf(a.out, "\x1b[%dA", lineCount)
+	}
+	width := a.selectorWidth()
+	if width > 68 {
+		width = 68
+	}
+	innerWidth := width - 2
+	color := os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
+	border := func(value string) string { return ansiStyle(value, selectorBorderStyle, color) }
+	title := " Choose a registry "
+	topFill := width - utf8.RuneCountInString(title) - 3
+	if topFill < 1 {
+		topFill = 1
+	}
+	a.selectorRawLine(border("┌─") + ansiStyle(title, selectorAccentStyle, color) + border(strings.Repeat("─", topFill)+"┐"))
+	for index, group := range groups {
+		marker := "    "
+		if index == selected {
+			marker = " >  "
+		}
+		left := marker + registryDisplay(group.Registry)
+		right := group.Active
+		if right != "" {
+			right += " ●"
+		}
+		style := ""
+		if index == selected {
+			style = selectorSelectedStyle
+		}
+		a.selectorBoxLine(padBetween(left, right, innerWidth), innerWidth, style, color)
+	}
+	a.selectorRawLine(border("├" + strings.Repeat("─", width-2) + "┤"))
+	a.selectorBoxLine("  ↑/↓ move   enter choose   q quit", innerWidth, selectorMutedStyle, color)
+	a.selectorRawLine(border("└" + strings.Repeat("─", width-2) + "┘"))
 }
 
 func (a *application) selectAccountLine(items []accounts.Account, currentIndex int) (string, error) {
@@ -388,7 +630,7 @@ func (a *application) selectAccountLine(items []accounts.Account, currentIndex i
 	return "", fmt.Errorf("account %q is not in the list", value)
 }
 
-func (a *application) selectAccountTTY(input *os.File, items []accounts.Account, currentIndex int) (string, error) {
+func (a *application) selectAccountTTY(input *os.File, items []accounts.Account, currentIndex int, title string, back bool) (string, error) {
 	selected := currentIndex
 	if selected < 0 {
 		selected = 0
@@ -403,7 +645,7 @@ func (a *application) selectAccountTTY(input *os.File, items []accounts.Account,
 
 	rendered := false
 	for {
-		a.renderAccountSelector(items, currentIndex, selected, rendered)
+		a.renderAccountSelector(items, currentIndex, selected, rendered, title, back)
 		rendered = true
 		var key [1]byte
 		if _, err := input.Read(key[:]); err != nil {
@@ -417,6 +659,10 @@ func (a *application) selectAccountTTY(input *os.File, items []accounts.Account,
 			return items[selected].Name, nil
 		case 3, 'q', 'Q':
 			return "", errSelectionCanceled
+		case 'h', 8, 127:
+			if back {
+				return "", errSelectionBack
+			}
 		case 'j':
 			selected = moveSelection(selected, 1, len(items))
 		case 'k':
@@ -434,12 +680,16 @@ func (a *application) selectAccountTTY(input *os.File, items []accounts.Account,
 				selected = moveSelection(selected, -1, len(items))
 			case 'B':
 				selected = moveSelection(selected, 1, len(items))
+			case 'D':
+				if back {
+					return "", errSelectionBack
+				}
 			}
 		}
 	}
 }
 
-func (a *application) renderAccountSelector(items []accounts.Account, currentIndex, selected int, redraw bool) {
+func (a *application) renderAccountSelector(items []accounts.Account, currentIndex, selected int, redraw bool, heading string, back bool) {
 	lineCount := len(items) + 4
 	if redraw {
 		fmt.Fprintf(a.out, "\x1b[%dA", lineCount)
@@ -463,7 +713,7 @@ func (a *application) renderAccountSelector(items []accounts.Account, currentInd
 	color := os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 	border := func(value string) string { return ansiStyle(value, selectorBorderStyle, color) }
 
-	title := " Docker accounts "
+	title := " " + heading + " "
 	topFill := width - utf8.RuneCountInString(title) - 3
 	if topFill < 1 {
 		topFill = 1
@@ -479,7 +729,11 @@ func (a *application) renderAccountSelector(items []accounts.Account, currentInd
 		a.selectorBoxLine(nameLine, innerWidth, nameStyle, color)
 	}
 	a.selectorRawLine(border("├" + strings.Repeat("─", width-2) + "┤"))
-	a.selectorBoxLine("  ↑/↓ move   enter switch   q quit", innerWidth, selectorMutedStyle, color)
+	help := "  ↑/↓ move   enter switch   q quit"
+	if back {
+		help = "  ↑/↓ move   enter switch   ← back   q quit"
+	}
+	a.selectorBoxLine(help, innerWidth, selectorMutedStyle, color)
 	a.selectorRawLine(border("└" + strings.Repeat("─", width-2) + "┘"))
 }
 
@@ -533,6 +787,13 @@ func isDockerHubRegistry(registry string) bool {
 	default:
 		return false
 	}
+}
+
+func registryDisplay(registry string) string {
+	if isDockerHubRegistry(registry) {
+		return "Docker Hub"
+	}
+	return accounts.RegistryKey(registry)
 }
 
 func fixedColumn(value string, width int) string {
@@ -713,12 +974,12 @@ func (a *application) remove(args []string) error {
 	if err != nil {
 		return accountNotFound(name, err)
 	}
-	current, err := a.store.Current()
+	active, err := a.store.IsActive(name)
 	if err != nil {
 		return err
 	}
-	if current == name && !force {
-		return fmt.Errorf("account %q is current; pass --force to remove it", name)
+	if active && !force {
+		return fmt.Errorf("account %q is active; pass --force to remove it", name)
 	}
 	if a.store.HasCredentials(name) {
 		if err := a.logoutAccount(account); err != nil {
@@ -820,19 +1081,23 @@ func (a *application) doctor(args []string) error {
 		pass("Docker CLI " + path)
 	}
 
-	current, err := a.store.Current()
+	active, err := a.store.ActiveAccounts()
 	if err != nil {
-		fail("cannot read current account: " + err.Error())
-	} else if current == "" {
-		fail("no Docker account selected")
-	} else if account, getErr := a.store.Get(current); getErr != nil {
-		fail("current account is invalid: " + getErr.Error())
+		fail("cannot read active accounts: " + err.Error())
+	} else if len(active) == 0 {
+		fail("no Docker accounts active")
 	} else {
-		pass(fmt.Sprintf("current account %s (%s@%s)", account.Name, account.Username, account.Registry))
-		if a.store.HasCredentials(current) {
+		pass(fmt.Sprintf("active accounts %d registries", len(active)))
+		missing := 0
+		for _, name := range active {
+			if _, getErr := a.store.Get(name); getErr != nil || !a.store.HasCredentials(name) {
+				missing++
+			}
+		}
+		if missing == 0 {
 			pass("credentials configured")
 		} else {
-			warn("credentials missing; run docker account login " + current)
+			warn(fmt.Sprintf("credentials missing for %d active account(s)", missing))
 		}
 	}
 
@@ -1026,9 +1291,10 @@ Manage multiple Docker registry accounts with isolated credentials.
 
 Commands:
   add       Add an account definition
+  import    Discover and import existing Docker logins
   list      List managed accounts
-  current   Print the selected account
-  use       Select the default account (does not log in again)
+  current   Print active accounts by registry
+  use       Switch an account for one registry
   login     Log in and persist credentials for one account
   logout    Remove persisted credentials for one account
   remove    Remove an account and its isolated credentials
@@ -1038,6 +1304,7 @@ Commands:
   version   Print the plugin version
 
 Examples:
+  docker account import
   docker account add personal --username my-user
   docker account login personal
   docker account use personal
@@ -1071,16 +1338,26 @@ Examples:
 
 List managed accounts and their local credential status.
 `
-	case "current":
-		help = `Usage:  docker account current
+	case "import":
+		help = `Usage:  docker account import
 
-Print the currently selected account name.
+Discover logins in the existing Docker configuration and credential store.
+Review the discovered accounts before importing them into isolated management.
+System Docker credentials are copied, never removed or overwritten.
+`
+	case "current":
+		help = `Usage:  docker account current [REGISTRY|--all]
+
+Without arguments, print the most recently selected profile for compatibility.
+With REGISTRY, print its active profile. Use --all to print every registry.
 `
 	case "use":
 		help = `Usage:  docker account use [NAME]
+        docker account use --registry REGISTRY
 
-Select the default account. With no NAME, open an interactive selector.
-This never performs a login.
+Switch one registry without changing active accounts for other registries.
+With no NAME, choose a registry first and then choose its account.
+When only one registry has multiple accounts, the registry step is skipped.
 
 Enable automatic switching once in Zsh:
   echo 'eval "$(docker account env)"' >> ~/.zshrc

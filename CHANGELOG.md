@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-04
+
+- Added confirmation-based import for logins found in Docker configuration and credential helpers.
+- Added first-use discovery when the interactive selector has no managed accounts.
+- Kept original Docker credentials unchanged while copying them into isolated account storage.
+- Added independent active profiles per registry so different registry logins coexist.
+- Added a two-level registry and profile selector when more than one registry is switchable.
+
 ## [0.8.3] - 2026-08-04
 
 - Reduced the interactive selector to profiles, usernames, active state, and keyboard focus.
@@ -41,7 +49,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Kept registry credentials isolated per account.
 - Improved interactive account selection and shell switching.
 
-[Unreleased]: https://github.com/smartcat999/docker-account/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/smartcat999/docker-account/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/smartcat999/docker-account/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/smartcat999/docker-account/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/smartcat999/docker-account/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/smartcat999/docker-account/compare/v0.8.0...v0.8.1

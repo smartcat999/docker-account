@@ -1,10 +1,12 @@
 package accounts
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,7 +29,9 @@ type Account struct {
 }
 
 type state struct {
-	Current string `json:"current"`
+	Version int               `json:"version,omitempty"`
+	Current string            `json:"current,omitempty"`
+	Active  map[string]string `json:"active,omitempty"`
 }
 
 type Store struct {
@@ -124,26 +128,137 @@ func (s *Store) List() ([]Account, error) {
 }
 
 func (s *Store) Current() (string, error) {
-	var value state
-	if err := readJSON(s.statePath(), &value); errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	} else if err != nil {
+	value, err := s.loadState()
+	if err != nil {
 		return "", err
 	}
 	return value.Current, nil
 }
 
 func (s *Store) Use(name string) error {
-	if _, err := s.Get(name); err != nil {
+	account, err := s.Get(name)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("account %q does not exist", name)
 		}
 		return err
 	}
+	value, err := s.loadState()
+	if err != nil {
+		return err
+	}
+	if value.Active == nil {
+		value.Active = map[string]string{}
+	}
+	value.Version = 2
+	value.Current = name
+	value.Active[RegistryKey(account.Registry)] = name
 	if err := s.updateCurrentLink(name); err != nil {
 		return err
 	}
-	return writeJSONAtomic(s.statePath(), state{Current: name})
+	return writeJSONAtomic(s.statePath(), value)
+}
+
+// ActivateIfUnset makes the first account for a registry available without
+// changing the profile used by the stable current-account link.
+func (s *Store) ActivateIfUnset(name string) (bool, error) {
+	account, err := s.Get(name)
+	if err != nil {
+		return false, err
+	}
+	value, err := s.loadState()
+	if err != nil {
+		return false, err
+	}
+	key := RegistryKey(account.Registry)
+	if value.Active[key] != "" {
+		return false, nil
+	}
+	if value.Active == nil {
+		value.Active = map[string]string{}
+	}
+	value.Version = 2
+	value.Active[key] = name
+	if value.Current == "" {
+		value.Current = name
+		if err := s.updateCurrentLink(name); err != nil {
+			return false, err
+		}
+	}
+	return true, writeJSONAtomic(s.statePath(), value)
+}
+
+func (s *Store) ActiveName(registry string) (string, error) {
+	value, err := s.loadState()
+	if err != nil {
+		return "", err
+	}
+	return value.Active[RegistryKey(registry)], nil
+}
+
+func (s *Store) ActiveAccounts() (map[string]string, error) {
+	value, err := s.loadState()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(value.Active))
+	for registry, name := range value.Active {
+		result[registry] = name
+	}
+	return result, nil
+}
+
+func (s *Store) IsActive(name string) (bool, error) {
+	active, err := s.ActiveAccounts()
+	if err != nil {
+		return false, err
+	}
+	for _, activeName := range active {
+		if activeName == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Store) loadState() (state, error) {
+	var value state
+	if err := readJSON(s.statePath(), &value); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return state{}, err
+	}
+	if value.Active == nil {
+		value.Active = map[string]string{}
+	}
+	items, err := s.List()
+	if err != nil {
+		return state{}, err
+	}
+	groups := map[string][]Account{}
+	for _, item := range items {
+		key := RegistryKey(item.Registry)
+		groups[key] = append(groups[key], item)
+		if item.Name == value.Current {
+			value.Active[key] = item.Name
+		}
+	}
+	for key, group := range groups {
+		if len(group) == 1 && value.Active[key] == "" {
+			value.Active[key] = group[0].Name
+		}
+	}
+	return value, nil
+}
+
+func RegistryKey(registry string) string {
+	value := strings.ToLower(strings.TrimSpace(strings.TrimRight(registry, "/")))
+	switch value {
+	case "docker.io", "index.docker.io", "registry-1.docker.io", "https://index.docker.io/v1":
+		return DefaultRegistry
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		return parsed.Host
+	}
+	return value
 }
 
 func (s *Store) SetCredentialStore(name, helper string) (Account, error) {
@@ -165,6 +280,32 @@ func (s *Store) ConfigureDockerCredentialStore(name, helper string) error {
 			config["auths"] = map[string]any{}
 		}
 		config["credsStore"] = helper
+	})
+}
+
+func (s *Store) EnsureRegistryAuth(name, registry string) error {
+	return s.updateDockerConfig(name, func(config map[string]any) {
+		auths, ok := config["auths"].(map[string]any)
+		if !ok {
+			auths = map[string]any{}
+			config["auths"] = auths
+		}
+		if _, exists := auths[registry]; !exists {
+			auths[registry] = map[string]any{}
+		}
+	})
+}
+
+func (s *Store) SetInlineCredential(name, registry, username, secret string) error {
+	encoded := base64.StdEncoding.EncodeToString([]byte(username + ":" + secret))
+	return s.updateDockerConfig(name, func(config map[string]any) {
+		auths, ok := config["auths"].(map[string]any)
+		if !ok {
+			auths = map[string]any{}
+			config["auths"] = auths
+		}
+		auths[registry] = map[string]any{"auth": encoded}
+		delete(config, "credsStore")
 	})
 }
 
@@ -295,23 +436,47 @@ func (s *Store) Remove(name string, force bool) error {
 		}
 		return err
 	}
-	current, err := s.Current()
+	value, err := s.loadState()
 	if err != nil {
 		return err
 	}
-	if current == name && !force {
-		return fmt.Errorf("account %q is current; pass --force to remove it", name)
+	active := false
+	for _, activeName := range value.Active {
+		active = active || activeName == name
+	}
+	if active && !force {
+		return fmt.Errorf("account %q is active; pass --force to remove it", name)
 	}
 	if err := os.RemoveAll(s.accountDir(name)); err != nil {
 		return fmt.Errorf("remove account %q: %w", name, err)
 	}
-	if current == name {
-		if err := os.Remove(s.CurrentLink()); err != nil && !errors.Is(err, os.ErrNotExist) {
+	for registry, activeName := range value.Active {
+		if activeName == name {
+			delete(value.Active, registry)
+		}
+	}
+	if value.Current == name {
+		value.Current = ""
+		remaining, listErr := s.List()
+		if listErr != nil {
+			return listErr
+		}
+		for _, item := range remaining {
+			if value.Active[RegistryKey(item.Registry)] == item.Name {
+				value.Current = item.Name
+				break
+			}
+		}
+		if value.Current != "" {
+			if err := s.updateCurrentLink(value.Current); err != nil {
+				return err
+			}
+		} else if err := os.Remove(s.CurrentLink()); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove current account link: %w", err)
 		}
-		return writeJSONAtomic(s.statePath(), state{})
 	}
-	return nil
+	value.Version = 2
+	return writeJSONAtomic(s.statePath(), value)
 }
 
 func (s *Store) ConfigDir(name string) string {

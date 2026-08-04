@@ -79,6 +79,43 @@ func TestCredentialHelperDelegatesWithAccountNamespace(t *testing.T) {
 	}
 }
 
+func TestCredentialHelperRoutesByRegistry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a POSIX shell script")
+	}
+	root := t.TempDir()
+	store := accounts.New(root)
+	for _, item := range []struct{ name, registry string }{
+		{"hub", "docker.io"}, {"harbor", "harbor.example.com"},
+	} {
+		if _, err := store.Add(item.name, item.name, item.registry); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.SetCredentialStore(item.name, "fake"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Use(item.name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binDir := t.TempDir()
+	helper := filepath.Join(binDir, "docker-credential-fake")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\ncat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_ACCOUNT_HOME", root)
+	t.Setenv("DOCKER_ACCOUNT_NAME", "hub")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var out, errOut bytes.Buffer
+	code := RunCredentialHelper([]string{"get"}, strings.NewReader("harbor.example.com\n"), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut.String())
+	}
+	if got := out.String(); got != "harbor.example.com/.docker-account/harbor" {
+		t.Fatalf("delegated payload = %q", got)
+	}
+}
+
 func TestNamespaceServerURLUsesKeychainPath(t *testing.T) {
 	tests := map[string]string{
 		"https://index.docker.io/v1/": "https://index.docker.io/v1/.docker-account/default",

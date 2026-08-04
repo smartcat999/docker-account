@@ -22,10 +22,18 @@ Prebuilt binaries are available for macOS and Linux on amd64 and arm64.
 To install a specific version:
 
 ```bash
-curl -fsSL https://github.com/smartcat999/docker-account/releases/download/v0.8.3/install.sh | sh
+curl -fsSL https://github.com/smartcat999/docker-account/releases/download/v0.9.0/install.sh | sh
 ```
 
 ## Quick start
+
+Already signed in with Docker? Discover the existing login and confirm before importing it:
+
+```bash
+docker account import
+```
+
+The original Docker credential is copied into isolated management and remains unchanged.
 
 Add an account and securely enter a password or access token:
 
@@ -58,11 +66,14 @@ Open the interactive selector:
 docker account use
 ```
 
-Or switch directly:
+If no accounts are managed yet, first use offers to discover and import an existing Docker login.
+
+Or switch directly. Each registry keeps its own active account:
 
 ```bash
 docker account use personal
 docker account current
+docker account current --all
 ```
 
 Docker commands in the same shell now use the selected account.
@@ -71,9 +82,10 @@ Docker commands in the same shell now use the selected account.
 
 | Command | Description |
 | --- | --- |
+| `docker account import` | Discover existing Docker logins and confirm before importing |
 | `docker account add NAME -u USER [--login]` | Add an account and optionally log in |
-| `docker account use [NAME]` | Select interactively or switch by name |
-| `docker account list` | Show accounts, current selection, and credential status |
+| `docker account use [NAME]` | Choose a registry and switch only its active account |
+| `docker account list` | Show accounts, active selections, and credential status |
 | `docker account login NAME` | Save credentials for an account |
 | `docker account logout NAME` | Remove an account's saved credentials |
 | `docker account remove NAME` | Remove an account definition |
@@ -90,9 +102,13 @@ Account credentials are stored separately under `~/.docker/accounts`. Docker run
 | --- | --- |
 | Registry credentials | Contexts and daemon endpoints |
 | Credential helper namespace | Buildx builders |
-| Current account selection | CLI plugins |
+| Profile metadata | CLI plugins |
+
+One profile is active per registry. Switching Docker Hub does not change active Harbor or other private-registry profiles.
 
 On macOS, credentials remain in Keychain with an account-specific namespace. Removing an account does not delete shared Docker contexts or builders.
+
+Independent multi-registry activation requires a native Docker credential helper, such as macOS Keychain, `pass`, or Secret Service. Docker's inline-auth fallback remains available for single-registry use.
 
 ## Upgrade and uninstall
 
