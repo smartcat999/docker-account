@@ -26,8 +26,7 @@ var errSelectionCanceled = errors.New("account selection canceled")
 const (
 	selectorBorderStyle   = ""
 	selectorAccentStyle   = "32" // the only explicit color
-	selectorCurrentStyle  = ""
-	selectorSelectedStyle = "7" // terminal-native reverse video
+	selectorSelectedStyle = "7"  // terminal-native reverse video
 	selectorMutedStyle    = "2"
 )
 
@@ -258,25 +257,71 @@ func (a *application) use(args []string) error {
 		name, err = a.selectAccount()
 		if err != nil {
 			if errors.Is(err, errSelectionCanceled) {
-				fmt.Fprintln(a.out, "Selection canceled.")
 				return nil
 			}
 			return err
 		}
 	}
-	if err := a.store.Use(name); err != nil {
-		return err
+	account, err := a.store.Get(name)
+	if err != nil {
+		return accountNotFound(name, err)
+	}
+	if len(args) == 0 && a.interactiveTerminal() && !a.store.HasCredentials(name) {
+		loginNow, err := a.confirmInteractiveLogin(account)
+		if err != nil {
+			return err
+		}
+		if !loginNow {
+			fmt.Fprintln(a.out, "No account change was made.")
+			return nil
+		}
+		if err := a.ensurePlugin(name); err != nil {
+			return err
+		}
+		if err := a.loginAccount(account, false); err != nil {
+			current, _ := a.store.Current()
+			if current != "" {
+				return fmt.Errorf("active account remains %q: %w", current, err)
+			}
+			return err
+		}
 	}
 	if err := a.ensurePlugin(name); err != nil {
 		return err
 	}
+	if err := a.store.Use(name); err != nil {
+		return err
+	}
 	if a.shellIntegrationActive() {
-		fmt.Fprintf(a.out, "Switched to Docker account %q.\n", name)
+		fmt.Fprintf(a.out, "✓ Switched to %s.\n", name)
 		return nil
 	}
 	fmt.Fprintf(a.out, "Selected Docker account %q, but the current shell is not activated.\n", name)
 	fmt.Fprintln(a.out, "Run once in this shell: eval \"$(docker account env)\"")
 	return nil
+}
+
+func (a *application) interactiveTerminal() bool {
+	input, inputOK := a.in.(*os.File)
+	output, outputOK := a.out.(*os.File)
+	return inputOK && outputOK && term.IsTerminal(int(input.Fd())) && term.IsTerminal(int(output.Fd()))
+}
+
+func (a *application) confirmInteractiveLogin(account accounts.Account) (bool, error) {
+	fmt.Fprintf(a.out, "\nAccount %q is not logged in to %s.\n", account.Name, account.Registry)
+	fmt.Fprint(a.out, "Login now? [Y/n] ")
+	value, err := bufio.NewReader(a.in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read login confirmation: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "y", "yes":
+		return true, nil
+	case "n", "no":
+		return false, nil
+	default:
+		return false, errors.New("expected y or n")
+	}
 }
 
 func (a *application) selectAccount() (string, error) {
@@ -297,10 +342,8 @@ func (a *application) selectAccount() (string, error) {
 			currentIndex = index
 		}
 	}
-	if input, inputOK := a.in.(*os.File); inputOK {
-		if output, outputOK := a.out.(*os.File); outputOK && term.IsTerminal(int(input.Fd())) && term.IsTerminal(int(output.Fd())) {
-			return a.selectAccountTTY(input, items, currentIndex)
-		}
+	if a.interactiveTerminal() {
+		return a.selectAccountTTY(a.in.(*os.File), items, currentIndex)
 	}
 	return a.selectAccountLine(items, currentIndex)
 }
@@ -397,11 +440,25 @@ func (a *application) selectAccountTTY(input *os.File, items []accounts.Account,
 }
 
 func (a *application) renderAccountSelector(items []accounts.Account, currentIndex, selected int, redraw bool) {
-	lineCount := len(items) + 3
+	lineCount := len(items) + 4
 	if redraw {
 		fmt.Fprintf(a.out, "\x1b[%dA", lineCount)
 	}
+	showRegistry := false
+	for _, item := range items {
+		if !isDockerHubRegistry(item.Registry) {
+			showRegistry = true
+			break
+		}
+	}
 	width := a.selectorWidth()
+	maxWidth := 58
+	if showRegistry {
+		maxWidth = 82
+	}
+	if width > maxWidth {
+		width = maxWidth
+	}
 	innerWidth := width - 2
 	color := os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 	border := func(value string) string { return ansiStyle(value, selectorBorderStyle, color) }
@@ -414,30 +471,27 @@ func (a *application) renderAccountSelector(items []accounts.Account, currentInd
 	top := border("┌─") + ansiStyle(title, selectorAccentStyle, color) + border(strings.Repeat("─", topFill)+"┐")
 	a.selectorRawLine(top)
 	for index, item := range items {
-		nameLine := selectorAccountText(item, index == selected, index == currentIndex, a.store.HasCredentials(item.Name), innerWidth)
+		nameLine := selectorAccountText(item, index == currentIndex, index == selected, a.store.HasCredentials(item.Name), showRegistry, innerWidth)
 		nameStyle := ""
 		if index == selected {
 			nameStyle = selectorSelectedStyle
-		} else if index == currentIndex {
-			nameStyle = selectorCurrentStyle
 		}
 		a.selectorBoxLine(nameLine, innerWidth, nameStyle, color)
 	}
-	a.selectorBoxLine("  ↑/↓ move   Enter select   q quit", innerWidth, selectorMutedStyle, color)
+	a.selectorRawLine(border("├" + strings.Repeat("─", width-2) + "┤"))
+	a.selectorBoxLine("  ↑/↓ move   enter switch   q quit", innerWidth, selectorMutedStyle, color)
 	a.selectorRawLine(border("└" + strings.Repeat("─", width-2) + "┘"))
 }
 
-func selectorAccountText(item accounts.Account, selected, current, configured bool, width int) string {
-	pointer := "  "
+func selectorAccountText(item accounts.Account, current, selected, configured, showRegistry bool, width int) string {
+	selectionMarker := "  "
 	if selected {
-		pointer = "> "
+		selectionMarker = "> "
 	}
-	status := "login required"
-	if configured {
-		status = "ready"
-	}
-	if current {
-		status = "current  " + status
+	prefix := " " + selectionMarker + " "
+	status := ""
+	if !configured {
+		status = "login"
 	}
 	available := width - utf8.RuneCountInString(status) - 1
 	if available < 1 {
@@ -445,17 +499,40 @@ func selectorAccountText(item accounts.Account, selected, current, configured bo
 	}
 	var details string
 	switch {
-	case width >= 68:
-		details = pointer + fixedColumn(item.Name, 16) + "  " + fixedColumn(item.Username, 16) + "  " + item.Registry
-	case width >= 54:
-		details = pointer + fixedColumn(item.Name, 14) + "  " + fixedColumn(item.Username, 14) + "  " + item.Registry
+	case showRegistry && width >= 68:
+		details = prefix + selectorProfileName(item.Name, current, 16) + "  " + fixedColumn(item.Username, 16) + "  " + item.Registry
+	case showRegistry:
+		details = prefix + selectorProfileName(item.Name, current, 14) + "  " + item.Registry
 	case width >= 44:
-		details = pointer + fixedColumn(item.Name, 14) + "  " + item.Username
+		details = prefix + selectorProfileName(item.Name, current, 16) + "  " + item.Username
 	default:
-		details = pointer + item.Name
+		details = prefix + selectorProfileName(item.Name, current, available-utf8.RuneCountInString(prefix))
 	}
 	details = truncateText(strings.TrimRight(details, " "), available)
 	return padBetween(details, status, width)
+}
+
+func selectorProfileName(name string, current bool, width int) string {
+	if !current {
+		return fixedColumn(name, width)
+	}
+	const activeLabel = " ●"
+	nameWidth := width - utf8.RuneCountInString(activeLabel)
+	if nameWidth < 1 {
+		return fixedColumn("●", width)
+	}
+	return fixedColumn(truncateText(name, nameWidth)+activeLabel, width)
+}
+
+func isDockerHubRegistry(registry string) bool {
+	registry = strings.ToLower(strings.TrimSpace(registry))
+	registry = strings.TrimSuffix(registry, "/")
+	switch registry {
+	case "docker.io", "index.docker.io", "registry-1.docker.io", "https://index.docker.io/v1":
+		return true
+	default:
+		return false
+	}
 }
 
 func fixedColumn(value string, width int) string {

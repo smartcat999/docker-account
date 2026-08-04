@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-04
+
+- Reduced the interactive selector to profiles, usernames, active state, and keyboard focus.
+- Hid Docker Hub registry and healthy credential status when they do not distinguish accounts.
+- Added login guidance before interactively switching to an account without credentials.
+- Preserved the active account when login or account preparation fails.
+- Updated the README selector screenshot.
+
 ## [0.8.2] - 2026-08-04
 
 - Made the installer verify the binary it just installed, including custom plugin directories.
@@ -33,7 +41,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Kept registry credentials isolated per account.
 - Improved interactive account selection and shell switching.
 
-[Unreleased]: https://github.com/smartcat999/docker-account/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/smartcat999/docker-account/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/smartcat999/docker-account/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/smartcat999/docker-account/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/smartcat999/docker-account/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/smartcat999/docker-account/compare/v0.7.5...v0.8.0

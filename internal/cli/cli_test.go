@@ -89,7 +89,7 @@ func TestUseOutputWhenShellIntegrationIsActive(t *testing.T) {
 	if err := app.use([]string{"work"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); got != "Switched to Docker account \"work\".\n" {
+	if got := out.String(); got != "✓ Switched to work.\n" {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }
@@ -136,7 +136,7 @@ func TestUseInteractiveSelectionByNumber(t *testing.T) {
 	if current != "company" {
 		t.Fatalf("current = %q", current)
 	}
-	for _, expected := range []string{"Select a Docker account:", "default", "company", `Switched to Docker account "company".`} {
+	for _, expected := range []string{"Select a Docker account:", "default", "company", "✓ Switched to company."} {
 		if !strings.Contains(out.String(), expected) {
 			t.Errorf("output missing %q:\n%s", expected, out.String())
 		}
@@ -173,7 +173,7 @@ func TestMoveSelectionWraps(t *testing.T) {
 }
 
 func TestSelectorTextLayout(t *testing.T) {
-	if got := padBetween("> account", "current  ready", 36); utf8.RuneCountInString(got) != 36 {
+	if got := padBetween(" >  account ●", "login", 36); utf8.RuneCountInString(got) != 36 {
 		t.Fatalf("layout width = %d: %q", utf8.RuneCountInString(got), got)
 	}
 	if got := truncateText("a-very-long-account-name", 10); got != "a-very-lo…" {
@@ -183,17 +183,76 @@ func TestSelectorTextLayout(t *testing.T) {
 
 func TestSelectorAccountUsesSingleLine(t *testing.T) {
 	item := accounts.Account{Name: "company", Username: "alice", Registry: "registry.example.com"}
-	got := selectorAccountText(item, true, true, true, 76)
+	got := selectorAccountText(item, true, true, true, true, 76)
 	if strings.Contains(got, "\n") {
 		t.Fatalf("account row contains a newline: %q", got)
 	}
-	for _, expected := range []string{"> company", "alice", "registry.example.com", "current", "ready"} {
+	for _, expected := range []string{">  company ●", "alice", "registry.example.com"} {
 		if !strings.Contains(got, expected) {
 			t.Errorf("row missing %q: %q", expected, got)
 		}
 	}
+	if strings.Contains(got, "login") {
+		t.Fatalf("healthy row displays a redundant status: %q", got)
+	}
 	if width := utf8.RuneCountInString(got); width != 76 {
 		t.Fatalf("row width = %d: %q", width, got)
+	}
+}
+
+func TestSelectorHidesDockerHubRegistryAndHealthyStatus(t *testing.T) {
+	item := accounts.Account{Name: "personal", Username: "demo-user", Registry: "docker.io"}
+	got := selectorAccountText(item, true, false, true, false, 56)
+	if strings.Contains(got, "docker.io") || strings.Contains(got, "Ready") {
+		t.Fatalf("row contains redundant Docker Hub information: %q", got)
+	}
+	for _, expected := range []string{"personal ●", "demo-user"} {
+		if !strings.Contains(got, expected) {
+			t.Errorf("row missing %q: %q", expected, got)
+		}
+	}
+}
+
+func TestSelectorShowsOnlyExceptionalStatus(t *testing.T) {
+	item := accounts.Account{Name: "company", Username: "alice", Registry: "docker.io"}
+	got := selectorAccountText(item, false, true, false, false, 56)
+	for _, expected := range []string{">", "company", "alice", "login"} {
+		if !strings.Contains(got, expected) {
+			t.Errorf("row missing %q: %q", expected, got)
+		}
+	}
+}
+
+func TestDockerHubRegistryAliases(t *testing.T) {
+	for _, registry := range []string{"docker.io", "index.docker.io", "registry-1.docker.io", "https://index.docker.io/v1/"} {
+		if !isDockerHubRegistry(registry) {
+			t.Errorf("expected Docker Hub registry: %q", registry)
+		}
+	}
+	if isDockerHubRegistry("registry.example.com") {
+		t.Fatal("private registry identified as Docker Hub")
+	}
+}
+
+func TestConfirmInteractiveLogin(t *testing.T) {
+	account := accounts.Account{Name: "company", Registry: "registry.example.com"}
+	for _, test := range []struct {
+		input string
+		want  bool
+	}{
+		{"\n", true},
+		{"yes\n", true},
+		{"n\n", false},
+	} {
+		var out bytes.Buffer
+		app := application{in: strings.NewReader(test.input), out: &out}
+		got, err := app.confirmInteractiveLogin(account)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != test.want {
+			t.Fatalf("input %q: got %v, want %v", test.input, got, test.want)
+		}
 	}
 }
 
