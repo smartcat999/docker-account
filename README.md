@@ -22,7 +22,7 @@ Prebuilt binaries are available for macOS and Linux on amd64 and arm64.
 To install a specific version:
 
 ```bash
-curl -fsSL https://github.com/smartcat999/docker-account/releases/download/v0.8.1/install.sh | sh
+curl -fsSL https://github.com/smartcat999/docker-account/releases/download/v0.8.2/install.sh | sh
 ```
 
 ## Quick start

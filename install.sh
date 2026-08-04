@@ -50,4 +50,4 @@ tar -xzf "${tmp_dir}/${archive}" -C "$tmp_dir"
 mkdir -p "$install_dir"
 install -m 755 "${tmp_dir}/docker-account" "${install_dir}/docker-account"
 echo "Installed docker-account to ${install_dir}/docker-account"
-docker account version
+"${install_dir}/docker-account" version
